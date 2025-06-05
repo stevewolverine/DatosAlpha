@@ -1,0 +1,30 @@
+name: DBF ➜ Supabase nightly sync
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"   # cada 3 horas (UTC)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python deps
+        run: |
+          pip install dbfread psycopg[binary] google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+      - name: Restore Drive key
+        run: echo "$DRIVE_KEY" > drive_key.json
+        env:
+          DRIVE_KEY: ${{ secrets.DRIVE_KEY }}
+
+      - name: Run ETL script
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+        run: python etl.py
