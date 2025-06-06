@@ -37,11 +37,12 @@ def load_dbf_to_firestore(buf, collection_name):
     dbf = DBF(buf, load=True)
     collection_ref = db.collection(collection_name)
 
-    print(f"Subiendo a colección: {collection_name}")
+    count = 0
     for record in dbf:
         doc = {k.lower(): str(v) if v is not None else None for k, v in record.items()}
         collection_ref.add(doc)
-    print(f"✓ {collection_name} listo.")
+        count += 1
+    print(f"✓ Subidos {count} registros a '{collection_name}'")
 
 def main():
     for f in list_dbf_files():
