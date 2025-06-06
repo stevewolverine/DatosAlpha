@@ -1,7 +1,7 @@
 # etl.py  –  Descarga .DBF de Google Drive y los carga en Supabase
 # Requiere: pip install dbfread psycopg[binary] google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
-import os, io, csv, ssl, json, tempfile
+import os, psycopg
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from dbfread import DBF
@@ -17,11 +17,8 @@ drive = build("drive", "v3", credentials=drive_creds)
 FOLDER_ID = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"    # <-- ID de la carpeta en Drive con los .DBF
 
 # ------- Conexión Supabase (se inyecta como SECRET) -----------------
-dsn = (
-    f"postgresql://{os.environ['DB_USER']}:{os.environ['DB_PASS']}"
-    f"@{os.environ['DB_HOST']}:5432/{os.environ['DB_NAME']}?sslmode=require"
-)
-conn = psycopg.connect(dsn)
+dsn  = os.environ["SUPA_DSN"]
+conn = psycopg.connect(dsn, connect_timeout=10)
 cur = conn.cursor()
 
 def list_dbf_files():
