@@ -2,7 +2,7 @@ name: DBF ➜ Supabase nightly sync
 
 on:
   schedule:
-    - cron: "0 */3 * * *"   # cada 3 horas (UTC)
+    - cron: "0 */3 * * *"   # cada 3 h (UTC)
   workflow_dispatch:
 
 jobs:
@@ -14,8 +14,11 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install dbfread psycopg[binary] google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+          pip install dbfread psycopg[binary] \
+                     google-api-python-client google-auth \
+                     google-auth-httplib2 google-auth-oauthlib
 
+      # si todavía necesitas la llave de Drive
       - name: Restore Drive key
         run: echo "$DRIVE_KEY" > drive_key.json
         env:
@@ -23,10 +26,6 @@ jobs:
 
       - name: Run ETL script
         env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASS: ${{ secrets.DB_PASS }}
-          DRIVE_KEY: ${{ secrets.DRIVE_KEY }}
-          UPA_DSN: ${{ secrets.SUPA_DSN }}
+          SUPA_DSN:  ${{ secrets.SUPA_DSN }}   # ← nombre correcto
+          DRIVE_KEY: ${{ secrets.DRIVE_KEY }}  # si la usas dentro de etl.py
         run: python etl.py
