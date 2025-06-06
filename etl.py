@@ -1,7 +1,9 @@
 # etl.py  –  Descarga .DBF de Google Drive y los carga en Supabase
 # Requiere: pip install dbfread psycopg[binary] google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
-import os, psycopg
+import os
+import json          
+import psycopg
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from dbfread import DBF
