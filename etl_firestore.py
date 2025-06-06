@@ -13,7 +13,7 @@ drive_creds = service_account.Credentials.from_service_account_info(
 )
 drive = build("drive", "v3", credentials=drive_creds)
 
-FOLDER_ID = "TU_ID_DE_CARPETA_EN_DRIVE"  # <- Cámbialo por el real
+FOLDER_ID = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"  # <- Cámbialo por el real
 
 # ----- Firebase -----
 firebase_creds = credentials.Certificate(json.loads(os.environ["FIREBASE_KEY"]))
