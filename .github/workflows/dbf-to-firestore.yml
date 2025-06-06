@@ -1,0 +1,30 @@
+name: Cargar DBF a Firebase Firestore
+
+on:
+  workflow_dispatch:  # Permite ejecución manual desde la pestaña "Actions"
+  push:
+    paths:
+      - etl_firestore.py  # Solo corre si cambia este archivo
+
+jobs:
+  sync-dbf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          pip install dbfread google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib firebase-admin
+
+      - name: Ejecutar script etl_firestore.py
+        env:
+          DRIVE_KEY: ${{ secrets.DRIVE_KEY }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+        run: python etl_firestore.py
