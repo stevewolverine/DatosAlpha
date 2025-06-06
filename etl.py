@@ -63,13 +63,11 @@ def load_dbf_to_pg(buf, table_name):
     )
     conn.commit()
 
-def main():
-    for f in list_dbf_files():
-        name = f["name"].rsplit(".", 1)[0].lower()
-        print("Sincronizando", f["name"])
-        buf = download_file(f["id"])
-        load_dbf_to_pg(buf, name)
-    print("✓ Sincronización completa.")
+def debug_tables():
+    cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
+    print("Tablas en Supabase (esquema public):")
+    for row in cur.fetchall():
+        print(" -", row[0])
 
 if __name__ == "__main__":
     main()
