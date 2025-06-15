@@ -8,7 +8,7 @@ from google.oauth2 import service_account
 from google.cloud.firestore_v1 import Client
 from dbfread import DBF
 from google.auth.transport.requests import Request
-from google.cloud.exceptions import ResourceExhausted
+from google.api_core.exceptions import ResourceExhausted
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.auth import default
