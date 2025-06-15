@@ -2,7 +2,7 @@
 # Requiere: dbfread, google-api-python-client, firebase-admin
 # Variables de entorno: DRIVE_KEY y FIREBASE_KEY (como JSON)
 
-import os, json, io
+import os, json, io, tempfile
 from dbfread import DBF
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -30,16 +30,18 @@ def list_dbf_files():
     files = drive.files().list(q=q, fields="files(id,name)").execute()["files"]
     return [f for f in files if f["name"].lower().endswith(".dbf")]
 
-def download_file(file_id):
+def download_file(file_id, file_name):
     request = drive.files().get_media(fileId=file_id)
-    buf = io.BytesIO()
-    status, body = drive._http.request(request.uri)
-    buf.write(body)
-    buf.seek(0)
-    return buf
+    _, body = drive._http.request(request.uri)
 
-def load_dbf_to_firestore(buf, collection_name):
-    dbf = DBF(buf, load=True)
+    temp_path = os.path.join(tempfile.gettempdir(), file_name)
+    with open(temp_path, "wb") as f:
+        f.write(body)
+
+    return temp_path
+
+def load_dbf_to_firestore(file_path, collection_name):
+    dbf = DBF(file_path, load=True)
     collection_ref = db.collection(collection_name)
 
     count = 0
@@ -65,8 +67,8 @@ def main():
         for f in dbf_files:
             name = f["name"].rsplit(".", 1)[0].lower()
             print(f"📂 Procesando: {f['name']} → colección '{name}'")
-            buf = download_file(f["id"])
-            load_dbf_to_firestore(buf, name)
+            temp_path = download_file(f["id"], f["name"])
+            load_dbf_to_firestore(temp_path, name)
 
         print("✅ Sincronización completada exitosamente.")
 
@@ -75,4 +77,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
