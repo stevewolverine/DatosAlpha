@@ -10,7 +10,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ----- CONFIGURACIÓN -----
-FOLDER_ID = 1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL  # ← REEMPLAZA por el ID real de tu carpeta en Drive
+FOLDER_ID = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"  # ← REEMPLAZA por el ID real de tu carpeta en Drive
 
 # ----- AUTENTICACIÓN GOOGLE DRIVE -----
 drive_creds = service_account.Credentials.from_service_account_info(
