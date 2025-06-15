@@ -84,7 +84,9 @@ def load_dbf_to_firestore(file_path, collection_name):
                 count_skipped += 1
 
         batch_count += 1
-        if batch_count >= 450:
+        time.sleep(0.01)
+
+        if batch_count >= 200:
             try:
                 batch.commit()
             except ResourceExhausted:
@@ -93,7 +95,7 @@ def load_dbf_to_firestore(file_path, collection_name):
                 batch.commit()
             batch = db.batch()
             batch_count = 0
-            time.sleep(1)
+            time.sleep(2)
 
     if batch_count > 0:
         try:
@@ -118,11 +120,14 @@ def main():
         for f in dbf_files:
             name = f["name"].rsplit(".", 1)[0].lower()
             print(f"📂 Procesando: {f['name']} → colección '{name}'")
-            try:
-                temp_path = download_file(f["id"], f["name"])
-                load_dbf_to_firestore(temp_path, name)
-            except Exception as e:
-                print(f"❌ Error al procesar '{f['name']}':", str(e))
+            for intento in range(3):
+                try:
+                    temp_path = download_file(f["id"], f["name"])
+                    load_dbf_to_firestore(temp_path, name)
+                    break
+                except Exception as e:
+                    print(f"❌ Error al procesar '{f['name']}' (intento {intento+1}/3): {e}")
+                    time.sleep(10)
 
         print("✅ Sincronización completada.")
     except Exception as e:
@@ -130,3 +135,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
