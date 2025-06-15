@@ -68,6 +68,9 @@ def load_dbf_to_firestore(file_path, collection_name):
             print("⏳ Límite de lecturas alcanzado. Esperando 10 segundos...")
             time.sleep(10)
             snapshot = doc_ref.get()
+        except Exception as e:
+            print(f"⚠️ Error al leer documento '{key}' en colección '{collection_name}': {e}")
+            continue
 
         if not snapshot.exists:
             batch.set(doc_ref, data)
@@ -119,5 +122,11 @@ def main():
                 temp_path = download_file(f["id"], f["name"])
                 load_dbf_to_firestore(temp_path, name)
             except Exception as e:
-                print
+                print(f"❌ Error al procesar '{f['name']}':", str(e))
 
+        print("✅ Sincronización completada.")
+    except Exception as e:
+        print("❌ Error general:", str(e))
+
+if __name__ == "__main__":
+    main()
