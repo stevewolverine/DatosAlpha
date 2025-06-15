@@ -134,12 +134,17 @@ def main():
 
         try:
             tmp_path = download_file_to_tmp(f["id"], name)
-            table = DBF(tmp_path, ignore_missing_memofile=True, encoding="latin1")
+table = DBF(
+    tmp_path,
+    load=True,                       # carga en memoria para que len() funcione
+    ignore_missing_memofile=True,
+    encoding="latin1"
+)
 
-            if not table.numrec:
-                print(f"⚠️ '{name}' está vacío, se omite.")
-                os.remove(tmp_path)
-                continue
+if len(table) == 0:                  # ⬅️ uso de len()
+    print(f"⚠️ '{name}' está vacío, se omite.")
+    os.remove(tmp_path)
+    continue
 
             key_field = table.field_names[0].lower()
             print(f"🔑 Usando '{key_field}' como clave")
