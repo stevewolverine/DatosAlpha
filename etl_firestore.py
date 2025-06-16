@@ -34,7 +34,7 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES ─────────
 FOLDER_ID    = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW = 9999            # procesa solo .DBF modificados en las últimas N h
+HOURS_WINDOW = 5            # procesa solo .DBF modificados en las últimas N h
 BATCH_SIZE   = 400          # ≤ 500
 PAUSE_SEC    = 1            # pausa entre commits
 ENCODING     = "latin1"     # ajustar si tus DBF usan otro encoding
