@@ -1,25 +1,3 @@
-"""
-etl_firestore_incremental.py
--------------------------------------------------
-Sincroniza .DBF de Google Drive con Firestore SOLO cuando:
-
-1. El archivo ha cambiado en las últimas N horas.
-2. Un registro cambió (comparando un hash SHA-1 guardado en el campo 'h').
-
-• 1 lectura por documento (lee solo el campo 'h')
-• 1 escritura SOLAMENTE si el hash difiere o el doc no existe
-• Lotes de 400 escrituras, con pausa de 1 s entre lotes
-• Requiere plan Blaze (sin límite de 20 000 ops/día)
-
-Variables de entorno:
-  DRIVE_KEY    → JSON service-account con acceso readonly a Drive
-  FIREBASE_KEY → JSON service-account de Firebase
-Ajusta:
-  FOLDER_ID        → carpeta en Drive donde están los .DBF
-  HOURS_WINDOW     → cuántas horas atrás considerar “cambiado”
-  BATCH_SIZE       → máx. docs por commit (≤ 500)
-"""
-
 import os, io, json, time, hashlib
 from datetime import datetime, timedelta, timezone
 from tempfile import NamedTemporaryFile
@@ -33,21 +11,21 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES ─────────
-FOLDER_ID    = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW = 5            # procesa solo .DBF modificados en las últimas N h
-BATCH_SIZE   = 400          # ≤ 500
-PAUSE_SEC    = 1            # pausa entre commits
-ENCODING     = "latin1"     # ajustar si tus DBF usan otro encoding
+FOLDER_ID    = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"  # carpeta Drive
+HOURS_WINDOW = 9999   # 1ª carga = grande; luego reduce, ej. 5
+BATCH_SIZE   = 400      # ≤ 500 docs por commit
+PAUSE_SEC    = 1        # pausa entre commits
+ENCODING     = "latin1" # encoding archivos DBF
 # ───────────────────────────
 
-# --- Credenciales Drive ---
+# Credenciales Google Drive
 drive_creds = service_account.Credentials.from_service_account_info(
     json.loads(os.environ["DRIVE_KEY"]),
     scopes=["https://www.googleapis.com/auth/drive.readonly"],
 )
 drive = build("drive", "v3", credentials=drive_creds)
 
-# --- Credenciales Firebase ---
+# Credenciales Firebase
 firebase_creds = credentials.Certificate(json.loads(os.environ["FIREBASE_KEY"]))
 firebase_admin.initialize_app(firebase_creds)
 db = firestore.client()
@@ -55,7 +33,6 @@ db = firestore.client()
 # ------------------------------------------------------------------
 
 def list_recent_dbf(hours_window):
-    """Lista archivos .DBF modificados en las últimas N horas."""
     threshold = datetime.now(timezone.utc) - timedelta(hours=hours_window)
     q = (f"'{FOLDER_ID}' in parents and "
          "mimeType!='application/vnd.google-apps.folder' and "
@@ -69,8 +46,8 @@ def list_recent_dbf(hours_window):
             recent.append(f)
     return recent
 
+
 def download_to_tmp(file_id, fname):
-    """Descarga el archivo de Drive a un .dbf temporal y devuelve la ruta."""
     buf = io.BytesIO()
     MediaIoBaseDownload(buf, drive.files().get_media(fileId=file_id)).next_chunk()
     buf.seek(0)
@@ -78,9 +55,21 @@ def download_to_tmp(file_id, fname):
     tmp.write(buf.read()); tmp.close()
     return tmp.name
 
+
 def sha1_dict(d):
-    """Hash estable de un dict."""
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
+
+
+def safe_commit(batch, tries=3):
+    for n in range(tries):
+        try:
+            batch.commit()
+            return
+        except Exception as e:
+            wait = 5 * (n + 1)
+            print(f"⏳ Commit falló ({n+1}/{tries}) → esperando {wait}s: {e}")
+            time.sleep(wait)
+    raise RuntimeError("Commit fallido tras reintentos")
 
 # ------------------------------------------------------------------
 
@@ -94,8 +83,7 @@ for f in files:
 
     try:
         tmp_path = download_to_tmp(f["id"], name)
-        table = DBF(tmp_path, load=True,
-                    ignore_missing_memofile=True, encoding=ENCODING)
+        table = DBF(tmp_path, load=True, ignore_missing_memofile=True, encoding=ENCODING)
         if len(table) == 0:
             print("⚠️  Vacío, omitido."); os.remove(tmp_path); continue
 
@@ -104,38 +92,38 @@ for f in files:
         batch     = db.batch(); n_batch = 0; escritos = 0; omitidos = 0
 
         for rec in table:
-            doc = {k.lower(): (str(v) if v is not None else None)
-                   for k, v in rec.items()}
+            doc = {k.lower(): (str(v) if v is not None else None) for k, v in rec.items()}
             doc_id = str(doc[key_field]).strip()
-            if not doc_id:   # sin clave -> se omite
+            if not doc_id:
                 continue
 
-            doc["h"] = sha1_dict(doc)         # hash de cambios
+            doc_hash = sha1_dict(doc)
+            doc["h"] = doc_hash
 
             try:
                 snap = col_ref.document(doc_id).get(field_paths=["h"])
-                if snap.exists and snap.get("h") == doc["h"]:
+                if snap.exists and snap.get("h") == doc_hash:
                     omitidos += 1
-                    continue  # sin cambios -> ni escribir
+                    continue
             except Exception:
-                pass          # doc nuevo o error -> escribir
+                pass
 
             batch.set(col_ref.document(doc_id), doc)
             n_batch += 1; escritos += 1
 
             if n_batch == BATCH_SIZE:
-                batch.commit(); batch = db.batch(); n_batch = 0
+                safe_commit(batch)
+                batch = db.batch(); n_batch = 0
                 time.sleep(PAUSE_SEC)
 
         if n_batch:
-            batch.commit()
+            safe_commit(batch)
 
         os.remove(tmp_path)
         print(f"✅ {escritos} escritos, {omitidos} sin cambios")
 
     except ResourceExhausted:
-        print("🚨 Se alcanzó el límite de escritura. Pausando 30 s…")
-        time.sleep(30)
+        print("🚨 Límite de escritura; pausa 30 s…"); time.sleep(30)
     except Exception as e:
         print(f"❌ Error procesando '{name}': {e}")
 
