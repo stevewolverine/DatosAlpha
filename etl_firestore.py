@@ -12,7 +12,7 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES ─────────
 FOLDER_ID    = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"  # carpeta Drive
-HOURS_WINDOW = 9999   # 1ª carga = grande; luego reduce, ej. 5
+HOURS_WINDOW = 5   # 1ª carga = grande; luego reduce, ej. 5
 BATCH_SIZE   = 400      # ≤ 500 docs por commit
 PAUSE_SEC    = 1        # pausa entre commits
 ENCODING     = "latin1" # encoding archivos DBF
