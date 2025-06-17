@@ -23,6 +23,12 @@ jobs:
         run: |
           pip install dbfread google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib firebase-admin
 
+      - name: Install deps
+  run: |
+    pip install dbfread google-api-python-client google-auth \
+               google-auth-httplib2 firebase-admin python-dateutil
+    
+
       - name: Ejecutar script etl_firestore.py
         env:
           DRIVE_KEY: ${{ secrets.DRIVE_KEY }}
