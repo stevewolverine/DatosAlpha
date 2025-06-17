@@ -1,10 +1,16 @@
 name: Cargar DBF a Firebase Firestore
 
 on:
+  schedule:
+    # 12:00 UTC   (06:00 CDMX en horario estándar / 07:00 CDMX en horario de verano)
+    - cron: '0 12 * * *'
+    # 20:00 UTC   (14:00 CDMX en horario estándar / 15:00 CDMX en horario de verano)
+    - cron: '0 20 * * *'
+
   workflow_dispatch:        # ejecución manual
   push:
     paths:
-      - etl_firestore.py    # corre sólo si cambias este archivo
+      - etl_firestore.py     # se dispara si cambias este archivo
 
 jobs:
   sync-dbf:
@@ -30,3 +36,4 @@ jobs:
           DRIVE_KEY: ${{ secrets.DRIVE_KEY }}
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
         run: python etl_firestore.py
+
