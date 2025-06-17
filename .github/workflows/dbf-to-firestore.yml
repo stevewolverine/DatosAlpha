@@ -1,10 +1,10 @@
 name: Cargar DBF a Firebase Firestore
 
 on:
-  workflow_dispatch:  # Permite ejecución manual desde la pestaña "Actions"
+  workflow_dispatch:        # ejecución manual
   push:
     paths:
-      - etl_firestore.py  # Solo corre si cambia este archivo
+      - etl_firestore.py    # corre sólo si cambias este archivo
 
 jobs:
   sync-dbf:
@@ -21,13 +21,9 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          pip install dbfread google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib firebase-admin
-
-      - name: Install deps
-  run: |
-    pip install dbfread google-api-python-client google-auth \
-               google-auth-httplib2 firebase-admin python-dateutil
-    
+          pip install dbfread google-api-python-client google-auth \
+                     google-auth-httplib2 google-auth-oauthlib \
+                     firebase-admin python-dateutil
 
       - name: Ejecutar script etl_firestore.py
         env:
