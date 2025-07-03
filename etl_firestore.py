@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-Sincroniza archivos .DBF en Google Drive → Firebase Firestore
-- Solo procesa archivos modificados en las últimas HOURS_WINDOW horas
-- Sube solo registros nuevos o modificados (hash SHA-1)
-- Usa lote de escrituras (≤ BATCH_SIZE) con reintentos
-- El campo que se usa como ID se define por tabla en KEY_FIELD
+Sincroniza .DBF (Google Drive) → Firebase Firestore
+- Sube solo archivos modificados en las últimas HOURS_WINDOW horas
+- Para cada registro:
+    • Usa la columna clave definida en KEY_FIELD como ID de documento
+    • Solo procesa si pertenece al CURRENT_YEAR
+      · Para tablas con fecha propia → DATE_FIELD
+      · Para tablas detalle        → RELATED_DATE (usa fecha del encabezado)
+    • Solo escribe si el hash SHA-1 cambia
 Requiere:
   pip install dbfread google-api-python-client google-auth google-auth-httplib2 \
               google-auth-oauthlib firebase-admin python-dateutil
-Variables de entorno:
-  DRIVE_KEY    → credenciales de servicio (JSON) con acceso de solo lectura a Drive
-  FIREBASE_KEY → credenciales de servicio (JSON) del proyecto Firebase
+Entorno:
+  DRIVE_KEY    → JSON cred. servicio Drive
+  FIREBASE_KEY → JSON cred. servicio Firebase
 """
 
 import os, io, json, time, hashlib
 from datetime import datetime, timedelta, timezone
 from tempfile import NamedTemporaryFile
 from dateutil import parser as dtparse
+from collections import defaultdict
 
 from dbfread import DBF
 from google.oauth2 import service_account
@@ -27,15 +31,15 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES GENERALES ─────────
-FOLDER_ID    = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW = 5                # procesa solo archivos modificados en las últimas N horas
-BATCH_SIZE   = 400              # escrituras por commit (≤500)
-PAUSE_SEC    = 1                # pausa entre commits (seg)
-ENCODING     = "latin1"         # codificación de los DBF
+FOLDER_ID     = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
+HOURS_WINDOW  = 5                 # solo archivos recientes
+BATCH_SIZE    = 400               # ≤500
+PAUSE_SEC     = 1                 # entre commits
+ENCODING      = "latin1"
+CURRENT_YEAR  = 2025              # ← año a conservar
 # ─────────────────────────────────────
 
-# ───────── MAPEO DE CLAVES POR TABLA ─────────
-#  nombre de la colección (sin .dbf, minúsculas)  :  nombre del campo clave en el DBF
+# ── Clave primaria por tabla (.dbf → campo) ──
 KEY_FIELD = {
     "producto"   : "CVE_PROD",
     "clientes"   : "CVE_CTE",
@@ -49,121 +53,158 @@ KEY_FIELD = {
     "prod_desc"  : "CVE_PROD",
     "prodimag"   : "CVE_PROD",
 }
-# Si una tabla no aparece aquí, se usará la primera columna del DBF
-# ──────────────────────────────────────────────
 
-# ───────── CONEXIÓN A GOOGLE DRIVE ────────────
-creds_drive = service_account.Credentials.from_service_account_info(
+# ── Campo-fecha propio por tabla ──
+DATE_FIELD = {
+    "facturac" : "FALTA_FAC",   # dd/mm/aaaa
+    "creditos" : "FECHA",
+    # Otras tablas con fecha propia aquí…
+}
+
+# ── Tablas detalle que dependen de la fecha de un encabezado ──
+#  detalle → (tabla_encabezado, campo_clave_enc, campo_fecha_enc)
+RELATED_DATE = {
+    "factentr"  : ("facturac", "NO_FAC", "FALTA_FAC"),
+    "facturad"  : ("facturac", "NO_FAC", "FALTA_FAC"),
+    "creditod"  : ("creditos", "NO_NOTA", "FECHA"),
+}
+
+# ───────── CONEXIONES ─────────
+drive_creds = service_account.Credentials.from_service_account_info(
     json.loads(os.environ["DRIVE_KEY"]),
     scopes=["https://www.googleapis.com/auth/drive.readonly"],
 )
-drive = build("drive", "v3", credentials=creds_drive)
+drive = build("drive", "v3", credentials=drive_creds)
 
-# ───────── CONEXIÓN A FIREBASE ────────────────
-creds_fb = credentials.Certificate(json.loads(os.environ["FIREBASE_KEY"]))
-firebase_admin.initialize_app(creds_fb)
+fb_creds = credentials.Certificate(json.loads(os.environ["FIREBASE_KEY"]))
+firebase_admin.initialize_app(fb_creds)
 db = firestore.client()
 
-# ───────────────── FUNCIONES ──────────────────
+# ───────── UTILIDADES ─────────
 def safe_commit(batch, retries=3):
     for n in range(retries):
         try:
-            batch.commit()
-            return
+            batch.commit(); return
         except Exception as e:
             wait = 5 * (n + 1)
-            print(f"⏳ Commit falló ({n+1}/{retries}) → esperando {wait}s: {e}")
+            print(f"⏳ Commit falló ({n+1}/{retries}) → {wait}s: {e}")
             time.sleep(wait)
     raise RuntimeError("Commit fallido tras reintentos")
 
-def list_recent_dbf(hours_window):
-    """Devuelve archivos .DBF modificados dentro de hours_window horas."""
-    threshold = datetime.now(timezone.utc) - timedelta(hours=hours_window)
-    q = (f"'{FOLDER_ID}' in parents and "
-         "mimeType!='application/vnd.google-apps.folder' and name contains '.DBF'")
-    fields = "files(id,name,modifiedTime)"
-    files  = drive.files().list(q=q, fields=fields).execute()["files"]
-    recent = []
-    print("📑 DEBUG listado de archivos y fechas:")
-    for f in files:
-        mod = dtparse.isoparse(f["modifiedTime"])   # hora UTC
-        print(f"   • {f['name']:20}  mod={mod}  >? umbral={threshold}")
-        if hours_window >= 876000 or mod > threshold:   # 100 años ⇒ forzar full
-            recent.append(f)
-    return recent
+def list_recent_dbf():
+    th = datetime.now(timezone.utc) - timedelta(hours=HOURS_WINDOW)
+    q  = (f"'{FOLDER_ID}' in parents and "
+          "mimeType!='application/vnd.google-apps.folder' and name contains '.DBF'")
+    files = drive.files().list(q=q, fields="files(id,name,modifiedTime)").execute()["files"]
+    return [f for f in files if HOURS_WINDOW >= 876000 or
+            dtparse.isoparse(f["modifiedTime"]) > th]
 
-def download_to_tmp(file_id):
+def download_tmp(file_id):
     buf = io.BytesIO()
     MediaIoBaseDownload(buf, drive.files().get_media(fileId=file_id)).next_chunk()
-    buf.seek(0)
     tmp = NamedTemporaryFile(delete=False, suffix=".dbf")
-    tmp.write(buf.read()); tmp.close()
+    tmp.write(buf.getvalue()); tmp.close()
     return tmp.name
 
-def sha1_dict(d):
-    """Hash SHA-1 estable del dict (para detectar cambios)."""
-    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
+def sha1_dict(d): return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
-# ─────────────────────────── MAIN ───────────────────────────────
-if __name__ == "__main__":
-    print("⏳ Buscando archivos .DBF recientes…")
-    files = list_recent_dbf(HOURS_WINDOW)
-    print(f"🗂 A procesar: {len(files)} archivos (últimas {HOURS_WINDOW} h)\n")
+def extract_year(value):
+    if value is None or str(value).strip() == "":
+        return None
+    if hasattr(value, "year"):
+        return value.year
+    try:
+        return dtparse.parse(str(value)).year
+    except Exception:
+        return None
 
-    for f in files:
-        name = f["name"]
-        col_name = name.rsplit('.', 1)[0].lower()   # nombre de colección
-        print(f"📂 {name} → '{col_name}'")
+# ───────── PRE-CARGA AÑOS DE ENCABEZADO ─────────
+print("⏳ Buscando archivos recientes…")
+files = list_recent_dbf()
+file_map = {f["name"].lower(): f for f in files}
 
-        try:
-            tmp_path = download_to_tmp(f["id"])
-            table = DBF(tmp_path, load=True, ignore_missing_memofile=True, encoding=ENCODING)
-            if len(table) == 0:
-                print("⚠️  Vacío, omitido"); os.remove(tmp_path); continue
+header_year: dict[str, dict[str,int]] = defaultdict(dict)  # tabla → {doc_id: año}
 
-            # Selección de la columna clave
-            key_field = KEY_FIELD.get(col_name, table.field_names[0]).upper()
+for det, (hdr_tab, hdr_key, hdr_date) in RELATED_DATE.items():
+    hdr_name = f"{hdr_tab}.dbf"
+    hdr_file = file_map.get(hdr_name)
+    if not hdr_file:
+        print(f"⚠️  Encabezado {hdr_name} no está en la ventana, se omitirá filtro de año")
+        continue
 
-            col   = db.collection(col_name)
-            batch = db.batch()
-            cnt = writes = skips = 0
+    path = download_tmp(hdr_file["id"])
+    hdr_dbf = DBF(path, load=True, ignore_missing_memofile=True, encoding=ENCODING)
+    for rec in hdr_dbf:
+        doc_id = str(rec[hdr_key]).strip()
+        yr = extract_year(rec[hdr_date])
+        if doc_id and yr is not None:
+            header_year[hdr_tab][doc_id] = yr
+    os.remove(path)
+    print(f"📑 Cacheado año de {len(header_year[hdr_tab])} registros de {hdr_tab}")
 
-            for rec in table:
-                # Lowercase keys + cast a string, None queda None
-                doc = {k.lower(): (str(v) if v is not None else None) for k, v in rec.items()}
+print(f"\n🗂 Archivos a procesar (últimas {HOURS_WINDOW} h): {len(files)}\n")
 
-                doc_id = str(rec[key_field]).strip()
-                if not doc_id:
-                    continue   # ignora registros sin clave
+# ───────── PROCESA CADA .DBF ─────────
+for f in files:
+    name = f["name"]; col_name = name.rsplit('.',1)[0].lower()
+    print(f"📂 {name} → colección '{col_name}'")
 
-                doc["h"] = sha1_dict(doc)
+    try:
+        tmp = download_tmp(f["id"])
+        table = DBF(tmp, load=True, ignore_missing_memofile=True, encoding=ENCODING)
+        if len(table) == 0:
+            print("⚠️  Vacío, omitido"); os.remove(tmp); continue
 
-                # Verifica si el documento cambió
-                try:
-                    h_snap = col.document(doc_id).get(field_paths=["h"])
-                    if h_snap.exists and h_snap.get("h") == doc["h"]:
-                        skips += 1
-                        continue
-                except Exception:
-                    pass
+        key_field = KEY_FIELD.get(col_name, table.field_names[0]).upper()
+        date_field = DATE_FIELD.get(col_name)
 
-                batch.set(col.document(doc_id), doc)
-                cnt += 1; writes += 1
-                if cnt == BATCH_SIZE:
-                    safe_commit(batch)
-                    batch = db.batch()
-                    cnt = 0
-                    time.sleep(PAUSE_SEC)
+        # Info de tabla relacionada (si aplica)
+        rel_info = RELATED_DATE.get(col_name)
+        col_fb = db.collection(col_name)
+        batch = db.batch(); cnt = writes = skips = 0
 
-            if cnt:
-                safe_commit(batch)
+        for rec in table:
+            # ── FILTRO POR AÑO ───────────────────────────
+            yr = None
+            if date_field:
+                yr = extract_year(rec[date_field])
+            elif rel_info:
+                hdr_tab, hdr_key, _ = rel_info
+                rel_id = str(rec[hdr_key]).strip()
+                yr = header_year.get(hdr_tab, {}).get(rel_id)
+            # Si no se pudo determinar el año, o no es 2025 → saltar
+            if yr != CURRENT_YEAR:
+                continue
+            # ─────────────────────────────────────────────
 
-            print(f"✅ escritos={writes}, saltados={skips}\n")
-            os.remove(tmp_path)
+            doc = {k.lower(): (str(v) if v is not None else None) for k, v in rec.items()}
+            doc_id = str(rec[key_field]).strip()
+            if not doc_id:
+                continue
+            doc["h"] = sha1_dict(doc)
 
-        except ResourceExhausted:
-            print("🚨 Cuota Firestore alcanzada, pausa 30 s"); time.sleep(30)
-        except Exception as e:
-            print(f"❌ Error en '{name}': {e}")
+            try:
+                snap = col_fb.document(doc_id).get(field_paths=["h"])
+                if snap.exists and snap.get("h") == doc["h"]:
+                    skips += 1; continue
+            except Exception:
+                pass
 
-    print("🎉 Sincronización COMPLETA")
+            batch.set(col_fb.document(doc_id), doc)
+            cnt += 1; writes += 1
+            if cnt == BATCH_SIZE:
+                safe_commit(batch); batch = db.batch(); cnt = 0; time.sleep(PAUSE_SEC)
+
+        if cnt:
+            safe_commit(batch)
+
+        print(f"✅ escritos={writes}, saltados={skips}\n")
+        os.remove(tmp)
+
+    except ResourceExhausted:
+        print("🚨 Cuota Firestore alcanzada, pausa 30 s"); time.sleep(30)
+    except Exception as e:
+        print(f"❌ Error en '{name}': {e}")
+
+print("🎉 Sincronización COMPLETA")
+
