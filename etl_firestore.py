@@ -183,14 +183,14 @@ for f in files:
         for rec in table:
             # ── FILTRO POR AÑO ───────────────────────────
             yr = None
-            if date_field:
-                yr = extract_year(rec[date_field])
-            elif rel_info:
-                hdr_tab, hdr_key, _ = rel_info
-                rel_id = str(rec[hdr_key]).strip()
-                yr = header_year.get(hdr_tab, {}).get(rel_id)
+if date_field:
+    yr = extract_year(rec[date_field])
+elif rel_info:
+    hdr_tab, hdr_key, _ = rel_info
+    rel_id = str(rec[hdr_key]).strip()
+    yr = header_year.get(hdr_tab, {}).get(rel_id)
             # Si no se pudo determinar el año, o no es 2025 → saltar
-            if yr != CURRENT_YEAR:
+            if yr is not None and yr != CURRENT_YEAR:
                 continue
             # ─────────────────────────────────────────────
 
