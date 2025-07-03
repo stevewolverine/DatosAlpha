@@ -182,17 +182,17 @@ for f in files:
 
         for rec in table:
             # ── FILTRO POR AÑO ───────────────────────────
-yr = None
-if date_field:
-    yr = extract_year(rec[date_field])
-elif rel_info:
-    hdr_tab, hdr_key, _ = rel_info
-    rel_id = str(rec[hdr_key]).strip()
-    yr = header_year.get(hdr_tab, {}).get(rel_id)
+            yr = None
+            if date_field:
+                yr = extract_year(rec[date_field])
+            elif rel_info:
+                hdr_tab, hdr_key, _ = rel_info
+                rel_id = str(rec[hdr_key]).strip()
+                yr = header_year.get(hdr_tab, {}).get(rel_id)
 
-# Solo se descarta si SÍ conocemos el año y es distinto al actual
-if yr is not None and yr != CURRENT_YEAR:
-    continue
+            # Solo se descarta si SÍ conocemos el año y es distinto al actual
+            if yr is not None and yr != CURRENT_YEAR:
+                continue
             # ─────────────────────────────────────────────
 
             doc = {k.lower(): (str(v) if v is not None else None) for k, v in rec.items()}
@@ -204,14 +204,19 @@ if yr is not None and yr != CURRENT_YEAR:
             try:
                 snap = col_fb.document(doc_id).get(field_paths=["h"])
                 if snap.exists and snap.get("h") == doc["h"]:
-                    skips += 1; continue
+                    skips += 1
+                    continue
             except Exception:
                 pass
 
             batch.set(col_fb.document(doc_id), doc)
-            cnt += 1; writes += 1
+            cnt += 1
+            writes += 1
             if cnt == BATCH_SIZE:
-                safe_commit(batch); batch = db.batch(); cnt = 0; time.sleep(PAUSE_SEC)
+                safe_commit(batch)
+                batch = db.batch()
+                cnt = 0
+                time.sleep(PAUSE_SEC)
 
         if cnt:
             safe_commit(batch)
