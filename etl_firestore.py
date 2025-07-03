@@ -32,7 +32,7 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES GENERALES ─────────
 FOLDER_ID     = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW  = 999                 # solo archivos recientes
+HOURS_WINDOW  = 5                # solo archivos recientes
 BATCH_SIZE    = 400               # ≤500
 PAUSE_SEC     = 1                 # entre commits
 ENCODING      = "latin1"
@@ -81,6 +81,14 @@ firebase_admin.initialize_app(fb_creds)
 db = firestore.client()
 
 # ───────── UTILIDADES ─────────
+def collection_exists(col_id: str) -> bool:
+    # Devuelve True si la colección ya tiene al menos 1 doc
+    try:
+        next(db.collection(col_id).limit(1).stream())
+        return True
+    except StopIteration:
+        return False
+
 def safe_commit(batch, retries=3):
     for n in range(retries):
         try:
@@ -96,8 +104,17 @@ def list_recent_dbf():
     q  = (f"'{FOLDER_ID}' in parents and "
           "mimeType!='application/vnd.google-apps.folder' and name contains '.DBF'")
     files = drive.files().list(q=q, fields="files(id,name,modifiedTime)").execute()["files"]
-    return [f for f in files if HOURS_WINDOW >= 876000 or
-            dtparse.isoparse(f["modifiedTime"]) > th]
+
+    selected = []
+    for f in files:
+        name = f["name"].lower()
+        col  = name.rsplit('.',1)[0]
+        rec  = dtparse.isoparse(f["modifiedTime"])
+        # ① dentro de la ventana  OR  ② la colección no existe aún
+        if rec > th or not collection_exists(col):
+            selected.append(f)
+    return selected
+
 
 def download_tmp(file_id):
     buf = io.BytesIO()
