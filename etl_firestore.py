@@ -32,7 +32,7 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES GENERALES ─────────
 FOLDER_ID     = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW  = 0                 # solo archivos recientes
+HOURS_WINDOW  = 999                 # solo archivos recientes
 BATCH_SIZE    = 400               # ≤500
 PAUSE_SEC     = 1                 # entre commits
 ENCODING      = "latin1"
