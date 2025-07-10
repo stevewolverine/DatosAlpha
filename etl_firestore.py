@@ -3,17 +3,18 @@
 Sincroniza .DBF (Google Drive) → Firebase Firestore
 - Sube solo archivos modificados en las últimas HOURS_WINDOW horas
 - Para cada registro:
-    • Usa la columna clave definida en KEY_FIELD como ID de documento
+    • Usa la columna clave definida en KEY_FIELD como ID
     • Solo procesa si pertenece al CURRENT_YEAR
-      · Para tablas con fecha propia → DATE_FIELD
-      · Para tablas detalle        → RELATED_DATE (usa fecha del encabezado)
+      · Tablas con fecha propia → DATE_FIELD
+      · Tablas detalle         → RELATED_DATE (usa fecha del encabezado)
+    • Tabla EXISTE: solo sube cuando LUGAR == 'LINEA'
     • Solo escribe si el hash SHA-1 cambia
 Requiere:
   pip install dbfread google-api-python-client google-auth google-auth-httplib2 \
               google-auth-oauthlib firebase-admin python-dateutil
-Entorno:
-  DRIVE_KEY    → JSON cred. servicio Drive
-  FIREBASE_KEY → JSON cred. servicio Firebase
+Variables de entorno:
+  DRIVE_KEY    – JSON cred. servicio Drive
+  FIREBASE_KEY – JSON cred. servicio Firebase
 """
 
 import os, io, json, time, hashlib
@@ -32,11 +33,11 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES GENERALES ─────────
 FOLDER_ID     = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW  = 5               # solo archivos recientes
-BATCH_SIZE    = 400               # ≤500
-PAUSE_SEC     = 1                 # entre commits
+HOURS_WINDOW  = 5        # solo archivos recientes
+BATCH_SIZE    = 400      # ≤500
+PAUSE_SEC     = 1        # entre commits
 ENCODING      = "latin1"
-CURRENT_YEAR  = 2025              # ← año a conservar
+CURRENT_YEAR  = 2025
 # ─────────────────────────────────────
 
 # ── Clave primaria por tabla (.dbf → campo) ──
@@ -54,19 +55,17 @@ KEY_FIELD = {
     "prodimag"   : "CVE_PROD",
 }
 
-# ── Campo-fecha propio por tabla ──
+# ── Campo-fecha propio ──
 DATE_FIELD = {
-    "facturac" : "FALTA_FAC",   # dd/mm/aaaa
+    "facturac" : "FALTA_FAC",
     "creditos" : "FECHA",
-    # Otras tablas con fecha propia aquí…
 }
 
-# ── Tablas detalle que dependen de la fecha de un encabezado ──
-#  detalle → (tabla_encabezado, campo_clave_enc, campo_fecha_enc)
+# ── Tablas detalle dependientes del encabezado ──
 RELATED_DATE = {
-    "factentr"  : ("facturac", "NO_FAC", "FALTA_FAC"),
-    "facturad"  : ("facturac", "NO_FAC", "FALTA_FAC"),
-    "creditod"  : ("creditos", "NO_NOTA", "FECHA"),
+    "factentr" : ("facturac", "NO_FAC", "FALTA_FAC"),
+    "facturad" : ("facturac", "NO_FAC", "FALTA_FAC"),
+    "creditod" : ("creditos", "NO_NOTA", "FECHA"),
 }
 
 # ───────── CONEXIONES ─────────
@@ -82,7 +81,6 @@ db = firestore.client()
 
 # ───────── UTILIDADES ─────────
 def collection_exists(col_id: str) -> bool:
-    # Devuelve True si la colección ya tiene al menos 1 doc
     try:
         next(db.collection(col_id).limit(1).stream())
         return True
@@ -94,8 +92,7 @@ def safe_commit(batch, retries=3):
         try:
             batch.commit(); return
         except Exception as e:
-            wait = 5 * (n + 1)
-            print(f"⏳ Commit falló ({n+1}/{retries}) → {wait}s: {e}")
+            wait = 5 * (n + 1); print(f"⏳ Commit falló ({n+1}/{retries}) → {wait}s: {e}")
             time.sleep(wait)
     raise RuntimeError("Commit fallido tras reintentos")
 
@@ -104,123 +101,92 @@ def list_recent_dbf():
     q  = (f"'{FOLDER_ID}' in parents and "
           "mimeType!='application/vnd.google-apps.folder' and name contains '.DBF'")
     files = drive.files().list(q=q, fields="files(id,name,modifiedTime)").execute()["files"]
-
-    selected = []
+    sel = []
     for f in files:
-        name = f["name"].lower()
-        col  = name.rsplit('.',1)[0]
-        rec  = dtparse.isoparse(f["modifiedTime"])
-        # ① dentro de la ventana  OR  ② la colección no existe aún
-        if rec > th or not collection_exists(col):
-            selected.append(f)
-    return selected
-
+        name = f["name"].lower(); col = name.rsplit('.',1)[0]
+        if dtparse.isoparse(f["modifiedTime"]) > th or not collection_exists(col):
+            sel.append(f)
+    return sel
 
 def download_tmp(file_id):
     buf = io.BytesIO()
     MediaIoBaseDownload(buf, drive.files().get_media(fileId=file_id)).next_chunk()
-    tmp = NamedTemporaryFile(delete=False, suffix=".dbf")
-    tmp.write(buf.getvalue()); tmp.close()
+    tmp = NamedTemporaryFile(delete=False, suffix=".dbf"); tmp.write(buf.getvalue()); tmp.close()
     return tmp.name
 
 def sha1_dict(d): return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
 
 def extract_year(value):
-    if value is None or str(value).strip() == "":
-        return None
-    if hasattr(value, "year"):
-        return value.year
-    try:
-        return dtparse.parse(str(value)).year
-    except Exception:
-        return None
+    if value is None or str(value).strip() == "": return None
+    if hasattr(value, "year"): return value.year
+    try: return dtparse.parse(str(value)).year
+    except Exception: return None
 
-# ───────── PRE-CARGA AÑOS DE ENCABEZADO ─────────
+# ───────── PRE-CARGA AÑOS ENCABEZADO ─────────
 print("⏳ Buscando archivos recientes…")
-files = list_recent_dbf()
-file_map = {f["name"].lower(): f for f in files}
-
-header_year: dict[str, dict[str,int]] = defaultdict(dict)  # tabla → {doc_id: año}
+files = list_recent_dbf(); file_map = {f["name"].lower(): f for f in files}
+header_year: dict[str, dict[str,int]] = defaultdict(dict)
 
 for det, (hdr_tab, hdr_key, hdr_date) in RELATED_DATE.items():
-    hdr_name = f"{hdr_tab}.dbf"
-    hdr_file = file_map.get(hdr_name)
+    hdr_name = f"{hdr_tab}.dbf"; hdr_file = file_map.get(hdr_name)
     if not hdr_file:
-        print(f"⚠️  Encabezado {hdr_name} no está en la ventana, se omitirá filtro de año")
-        continue
-
+        print(f"⚠️  Encabezado {hdr_name} no está en la ventana, se omite filtro año"); continue
     path = download_tmp(hdr_file["id"])
-    hdr_dbf = DBF(path, load=True, ignore_missing_memofile=True, encoding=ENCODING)
-    for rec in hdr_dbf:
-        doc_id = str(rec[hdr_key]).strip()
-        yr = extract_year(rec[hdr_date])
-        if doc_id and yr is not None:
-            header_year[hdr_tab][doc_id] = yr
+    for rec in DBF(path, load=True, ignore_missing_memofile=True, encoding=ENCODING):
+        doc_id = str(rec[hdr_key]).strip(); yr = extract_year(rec[hdr_date])
+        if doc_id and yr is not None: header_year[hdr_tab][doc_id] = yr
     os.remove(path)
-    print(f"📑 Cacheado año de {len(header_year[hdr_tab])} registros de {hdr_tab}")
+    print(f"📑 Cacheado {len(header_year[hdr_tab])} años de {hdr_tab}")
 
 print(f"\n🗂 Archivos a procesar (últimas {HOURS_WINDOW} h): {len(files)}\n")
 
-# ───────── PROCESA CADA .DBF ─────────
+# ───────── PROCESADO PRINCIPAL ─────────
 for f in files:
     name = f["name"]; col_name = name.rsplit('.',1)[0].lower()
     print(f"📂 {name} → colección '{col_name}'")
-
     try:
         tmp = download_tmp(f["id"])
         table = DBF(tmp, load=True, ignore_missing_memofile=True, encoding=ENCODING)
-        if len(table) == 0:
+        if not table:
             print("⚠️  Vacío, omitido"); os.remove(tmp); continue
 
         key_field = KEY_FIELD.get(col_name, table.field_names[0]).upper()
         date_field = DATE_FIELD.get(col_name)
-
-        # Info de tabla relacionada (si aplica)
-        rel_info = RELATED_DATE.get(col_name)
+        rel_info   = RELATED_DATE.get(col_name)
         col_fb = db.collection(col_name)
         batch = db.batch(); cnt = writes = skips = 0
 
         for rec in table:
-            # ── FILTRO POR AÑO ───────────────────────────
+            # ── FILTRO ESPECIAL PARA EXISTE ──
+            if col_name == "existe":
+                if str(rec.get("LUGAR", "")).strip().upper() != "LINEA":
+                    continue
+            # ── FILTRO POR AÑO ──
             yr = None
             if date_field:
                 yr = extract_year(rec[date_field])
             elif rel_info:
                 hdr_tab, hdr_key, _ = rel_info
-                rel_id = str(rec[hdr_key]).strip()
-                yr = header_year.get(hdr_tab, {}).get(rel_id)
-
-            # Solo se descarta si SÍ conocemos el año y es distinto al actual
+                yr = header_year.get(hdr_tab, {}).get(str(rec[hdr_key]).strip())
             if yr is not None and yr != CURRENT_YEAR:
                 continue
-            # ─────────────────────────────────────────────
+            # ─────────────────────
 
-            doc = {k.lower(): (str(v) if v is not None else None) for k, v in rec.items()}
+            doc = {k.lower(): (str(v) if v is not None else None) for k,v in rec.items()}
             doc_id = str(rec[key_field]).strip()
-            if not doc_id:
-                continue
+            if not doc_id: continue
             doc["h"] = sha1_dict(doc)
 
             try:
-                snap = col_fb.document(doc_id).get(field_paths=["h"])
-                if snap.exists and snap.get("h") == doc["h"]:
-                    skips += 1
-                    continue
-            except Exception:
-                pass
+                if col_fb.document(doc_id).get(field_paths=["h"]).get("h") == doc["h"]:
+                    skips += 1; continue
+            except Exception: pass
 
-            batch.set(col_fb.document(doc_id), doc)
-            cnt += 1
-            writes += 1
+            batch.set(col_fb.document(doc_id), doc); cnt += 1; writes += 1
             if cnt == BATCH_SIZE:
-                safe_commit(batch)
-                batch = db.batch()
-                cnt = 0
-                time.sleep(PAUSE_SEC)
+                safe_commit(batch); batch = db.batch(); cnt = 0; time.sleep(PAUSE_SEC)
 
-        if cnt:
-            safe_commit(batch)
-
+        if cnt: safe_commit(batch)
         print(f"✅ escritos={writes}, saltados={skips}\n")
         os.remove(tmp)
 
@@ -230,4 +196,5 @@ for f in files:
         print(f"❌ Error en '{name}': {e}")
 
 print("🎉 Sincronización COMPLETA")
+
 
