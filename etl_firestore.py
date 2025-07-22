@@ -208,7 +208,7 @@ for f in files:
             except Exception:
                 pass
 
-            batch.set(col_fb.document(doc_id), doc)
+            batch.set(col_fb.document(doc_id), doc, merge=True)
             cnt += 1; writes += 1
             if cnt == BATCH_SIZE:
                 safe_commit(batch); batch = db.batch(); cnt = 0; time.sleep(PAUSE_SEC)
