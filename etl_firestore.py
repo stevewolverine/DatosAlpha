@@ -141,7 +141,7 @@ def sha1_dict(d: Dict) -> str:
 def extract_year(val: Any) -> Optional[int]:
     if val is None or str(val).strip() == "":
         return None
-    if isinstance(val, (datetime, datetime.date)):
+    if isinstance(val, (datetime, date)):
         return val.year
     try:
         ## REF: Capturar excepciones específicas.
