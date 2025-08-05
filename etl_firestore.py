@@ -102,10 +102,20 @@ def safe_commit(batch, retries=3):
     raise RuntimeError("Commit fallido tras reintentos")
 
 def list_recent_dbf() -> List[Dict[str, Any]]:
+    print("  🔎 Entrando en modo de depuración para list_recent_dbf...")
     threshold = datetime.now(timezone.utc) - timedelta(hours=HOURS_WINDOW)
+    
+    # --- LÍNEA DE DEPURACIÓN 1 ---
+    print(f"  🕒 Umbral de tiempo (Threshold): {threshold}")
+    
     query = f"'{FOLDER_ID}' in parents and mimeType!='application/vnd.google-apps.folder'"
     files = drive.files().list(q=query, fields="files(id,name,modifiedTime)").execute().get("files", [])
     
+    if not files:
+        print("  ⚠️ No se encontraron archivos en la carpeta de Google Drive.")
+        return []
+
+    print(f"  📄 Se encontraron {len(files)} archivos en total. Analizando cada uno...")
     selected_files = []
     for f in files:
         if not f["name"].lower().endswith(".dbf"):
@@ -114,9 +124,24 @@ def list_recent_dbf() -> List[Dict[str, Any]]:
         collection_name = f["name"].rsplit(".", 1)[0].lower()
         modified_time = dtparse.isoparse(f["modifiedTime"])
         
-        if modified_time > threshold or not collection_exists(collection_name):
+        # --- LÍNEAS DE DEPURACIÓN 2 ---
+        print("\n  ---------------------------------")
+        print(f"  -> Archivo: {f['name']}")
+        print(f"     Fecha de modificación: {modified_time}")
+        
+        is_recent = modified_time > threshold
+        exists = collection_exists(collection_name)
+        
+        print(f"     ¿Es reciente? (mod_time > threshold): {is_recent}")
+        print(f"     ¿Colección NO existe?: {!exists}")
+        
+        if is_recent or not exists:
+            print("     DECISIÓN: ✅ SELECCIONADO")
             selected_files.append(f)
+        else:
+            print("     DECISIÓN: ❌ OMITIDO")
             
+    print("  ---------------------------------")
     return selected_files
 
 ## REF: Usar un bloque 'with' para garantizar que el archivo temporal se elimine.
