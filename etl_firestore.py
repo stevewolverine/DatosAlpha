@@ -37,7 +37,7 @@ from firebase_admin import credentials, firestore
 
 # ───────── AJUSTES GENERALES ─────────
 FOLDER_ID = "1kgnfsfNnkxxC8o-BfBx_fssv751tLNzL"
-HOURS_WINDOW = 5
+HOURS_WINDOW = 24
 BATCH_SIZE = 400
 PAUSE_SEC = 1
 ENCODING = "latin1"
