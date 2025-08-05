@@ -133,7 +133,7 @@ def list_recent_dbf() -> List[Dict[str, Any]]:
         exists = collection_exists(collection_name)
         
         print(f"     ¿Es reciente? (mod_time > threshold): {is_recent}")
-        print(f"     ¿Colección NO existe?: {!exists}")
+        print(f"     ¿Colección NO existe?: {exists}")
         
         if is_recent or not exists:
             print("     DECISIÓN: ✅ SELECCIONADO")
